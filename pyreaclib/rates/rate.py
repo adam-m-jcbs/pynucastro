@@ -76,6 +76,7 @@ class Nucleus(object):
 
     """
     def __init__(self, name):
+        """ name should be as string as, e.g. he4 or li7 """
         self.raw = name
 
         # element symbol and atomic weight
@@ -132,15 +133,29 @@ class Nucleus(object):
             return self.A < other.A
 
 class Rate(object):
-    """ a single Reaclib rate, which can be composed of multiple sets """
+    """ 
+    A single Reaclib rate, which can be composed of multiple sets.
 
-    def __init__(self, file):
-        self.file = os.path.basename(file)
+    If 'file' is supplied, look for a rate file by that name.
+
+    If 'ratelines' is supplied, that should be a list of strings
+    which are lines in a rate file (Reaclib v2-formatted)
+    from the Reaclib rate library.
+    """
+
+    def __init__(self, file=None, ratelines=None):
+        if file:
+            self.file = os.path.basename(file)
         self.chapter = None    # the Reaclib chapter for this reaction
         self.original_source = None   # the contents of the original rate file
         self.reactants = []
         self.products = []
         self.sets = []
+        self.Q = 0.0
+        self.string = ""
+        self.pretty_string = r"$"
+        self.prefactor = 1.0  # this is 1/2 for rates like a + a (double counting)
+        self.inv_prefactor = 1
 
         # Tells if this rate is eligible for screening
         # using screenz.f90 provided by BoxLib Microphysics.
@@ -149,18 +164,43 @@ class Rate(object):
         # Rate.ion_screen is a 2-element list of Nucleus objects for screening
         self.ion_screen = None 
 
+        if file:
+            # Call rate file parser if its a standalone file.
+            self.parse_rate_file()
+        elif lines:
+            # Parse list of lines defining the rate
+            self.rate_from_lines(ratelines)
+
+        # Calculate rate properties
+        self.compute_prefactor()
+        self.decide_screening()
+        self.compose_strings()
+
+    def __repr__(self):
+        return self.string
+
+    def parse_rate_file(self):
+        """ 
+        Parse a standalone file containing this rate.
+        File should be in Reaclib v1 format though
+        the data can be any Reaclib version.
+        """
         idx = self.file.rfind("-")
         self.fname = self.file[:idx].replace("--","-").replace("-","_")
 
-        self.Q = 0.0
-
-        # read in the file, parse the different sets and store them as
-        # SingleSet objects in sets[]
+        # read in the file and close
         f = open(file, "r")                            
         lines = f.readlines()
+        f.close()
 
-        self.original_source = "".join(lines)
+        # extract rate data from lines
+        self.rate_from_lines(lines)
 
+    def rate_from_lines(self, lines):
+        """
+        Given lines which define the rate,
+        extract the rate information.
+        """
         # first line is the chapter
         self.chapter = lines[0].strip()
         # catch table prescription
@@ -277,26 +317,8 @@ class Rate(object):
 
                 a = [float(e) for e in a if not e.strip() == ""]
                 self.sets.append(SingleSet(a, label=label))
-                
-        # compute self.prefactor and self.dens_exp from the reactants
-        self.prefactor = 1.0  # this is 1/2 for rates like a + a (double counting)
-        self.inv_prefactor = 1
-        for r in set(self.reactants):
-            self.inv_prefactor = self.inv_prefactor * np.math.factorial(self.reactants.count(r))
-        self.prefactor = self.prefactor/float(self.inv_prefactor)
-        self.dens_exp = len(self.reactants)-1
 
-        # determine if this rate is eligible for screening
-        nucz = []
-        for parent in self.reactants:
-            if parent.Z != 0:
-                nucz.append(parent)
-        if len(nucz) > 1:
-            nucz.sort(key=lambda x: x.Z)
-            self.ion_screen = []
-            self.ion_screen.append(nucz[0])
-            self.ion_screen.append(nucz[1])
-        
+    def compose_strings(self):
         self.string = ""
         self.pretty_string = r"$"
         for n, r in enumerate(self.reactants):
@@ -317,10 +339,28 @@ class Rate(object):
                 self.pretty_string += r" + "
 
         self.pretty_string += r"$"
-        
-    def __repr__(self):
-        return self.string
 
+    def compute_prefactor(self):
+        """ compute statistical prefactor and density exponent from the reactants """
+        self.prefactor = 1.0  # this is 1/2 for rates like a + a (double counting)
+        self.inv_prefactor = 1
+        for r in set(self.reactants):
+            self.inv_prefactor = self.inv_prefactor * np.math.factorial(self.reactants.count(r))
+        self.prefactor = self.prefactor/float(self.inv_prefactor)
+        self.dens_exp = len(self.reactants)-1
+
+    def decide_screening(self):
+        """ determine if this rate is eligible for screening """
+        nucz = []
+        for parent in self.reactants:
+            if parent.Z != 0:
+                nucz.append(parent)
+        if len(nucz) > 1:
+            nucz.sort(key=lambda x: x.Z)
+            self.ion_screen = []
+            self.ion_screen.append(nucz[0])
+            self.ion_screen.append(nucz[1])
+        
     def eval(self, T):
         """ evauate the reaction rate for temperature T """
         tf = Tfactors(T)
@@ -367,3 +407,140 @@ class Rate(object):
         plt.title(r"{}".format(self.pretty_string))
 
         plt.show()
+
+class ReaclibLibrary(object):
+    def __init__(self, library_file = '20170303ReaclibV2.2'):
+        self.library_file = library_file
+        self.rates = []
+        return
+    
+    def parse_library_file(self):
+        """ 
+        Parse a standalone Reaclib library
+        File should be in Reaclib v1 format though
+        the data can be any Reaclib version.
+        """
+        # read in the file, parse the different Rates
+        f = open(self.library_file, "r")
+        lines = f.readlines()
+
+        self.original_source = "".join(lines)
+
+        ####DON
+        
+        # first line is the chapter
+        self.chapter = lines[0].strip()
+        # catch table prescription
+        if self.chapter != "t":
+            self.chapter = int(self.chapter)
+
+        # remove any black lines
+        set_lines = [l for l in lines[1:] if not l.strip() == ""]
+
+        if self.chapter == "t":
+            # e1 -> e2, Tabulated
+            s1 = set_lines.pop(0)
+            s2 = set_lines.pop(0)
+            s3 = set_lines.pop(0)
+            s4 = set_lines.pop(0)
+            s5 = set_lines.pop(0)
+            f = s1.split()
+            self.reactants.append(Nucleus(f[0]))
+            self.products.append(Nucleus(f[1]))
+
+            self.table_file = s2.strip()
+            self.table_header_lines = int(s3.strip())
+            self.table_rhoy_lines   = int(s4.strip())
+            self.table_temp_lines   = int(s5.strip())
+            self.table_num_vars     = 6 # Hard-coded number of variables in tables for now.
+            self.table_index_name = 'j_{}_{}'.format(self.reactants[0], self.products[0])
+
+        else:
+            # the rest is the sets
+            first = 1
+            while len(set_lines) > 0:
+                # sets are 3 lines long
+                s1 = set_lines.pop(0)
+                s2 = set_lines.pop(0)
+                s3 = set_lines.pop(0)
+
+                # first line of a set has up to 6 nuclei, then the label,
+                # and finally the Q value
+                f = s1.split()
+                Q = f.pop()
+                label = f.pop()
+
+                if first:
+                    self.Q = Q
+
+                    # what's left are the nuclei -- their interpretation
+                    # depends on the chapter
+                    if self.chapter == 1:
+                        # e1 -> e2
+                        self.reactants.append(Nucleus(f[0]))
+                        self.products.append(Nucleus(f[1]))
+
+                    elif self.chapter == 2:
+                        # e1 -> e2 + e3
+                        self.reactants.append(Nucleus(f[0]))
+                        self.products += [Nucleus(f[1]), Nucleus(f[2])]
+
+                    elif self.chapter == 3:
+                        # e1 -> e2 + e3 + e4
+                        self.reactants.append(Nucleus(f[0]))
+                        self.products += [Nucleus(f[1]), Nucleus(f[2]), Nucleus(f[3])]
+
+                    elif self.chapter == 4:
+                        # e1 + e2 -> e3
+                        self.reactants += [Nucleus(f[0]), Nucleus(f[1])]
+                        self.products.append(Nucleus(f[2]))
+
+                    elif self.chapter == 5:
+                        # e1 + e2 -> e3 + e4
+                        self.reactants += [Nucleus(f[0]), Nucleus(f[1])]
+                        self.products += [Nucleus(f[2]), Nucleus(f[3])]
+
+                    elif self.chapter == 6:
+                        # e1 + e2 -> e3 + e4 + e5
+                        self.reactants += [Nucleus(f[0]), Nucleus(f[1])]
+                        self.products += [Nucleus(f[2]), Nucleus(f[3]), Nucleus(f[4])]
+
+                    elif self.chapter == 7:
+                        # e1 + e2 -> e3 + e4 + e5 + e6
+                        self.reactants += [Nucleus(f[0]), Nucleus(f[1])]
+                        self.products += [Nucleus(f[2]), Nucleus(f[3]),
+                                          Nucleus(f[4]), Nucleus(f[5])]
+
+                    elif self.chapter == 8:
+                        # e1 + e2 + e3 -> e4
+                        self.reactants += [Nucleus(f[0]), Nucleus(f[1]), Nucleus(f[2])]
+                        self.products.append(Nucleus(f[3]))
+
+                    elif self.chapter == 9:
+                        # e1 + e2 + e3 -> e4 + e5
+                        self.reactants += [Nucleus(f[0]), Nucleus(f[1]), Nucleus(f[2])]
+                        self.products += [Nucleus(f[3]), Nucleus(f[4])]
+
+                    elif self.chapter == 10:
+                        # e1 + e2 + e3 + e4 -> e5 + e6
+                        self.reactants += [Nucleus(f[0]), Nucleus(f[1]),
+                                           Nucleus(f[2]), Nucleus(f[3])]
+                        self.products += [Nucleus(f[4]), Nucleus(f[5])]
+
+                    elif self.chapter == 11:
+                        # e1 -> e2 + e3 + e4 + e5
+                        self.reactants.append(Nucleus(f[0]))
+                        self.products += [Nucleus(f[1]), Nucleus(f[2]),
+                                          Nucleus(f[3]), Nucleus(f[4])]
+                    
+                    first = 0
+
+                # the second line contains the first 4 coefficients
+                # the third lines contains the final 3
+                # we can't just use split() here, since the fields run into one another
+                n = 13  # length of the field
+                a = [s2[i:i+n] for i in range(0, len(s2), n)]
+                a += [s3[i:i+n] for i in range(0, len(s3), n)]
+
+                a = [float(e) for e in a if not e.strip() == ""]
+                self.sets.append(SingleSet(a, label=label))
