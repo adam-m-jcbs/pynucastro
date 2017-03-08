@@ -277,12 +277,17 @@ class BaseFortranNetwork(RateCollection):
         rem = re.match('\A'+k+'\(([0-9]*)\)\Z',l)
         return int(rem.group(1))
 
-    def write_network(self):
+    def write_network(self, use_cse=False):
         """
         This writes the RHS, jacobian and ancillary files for the system of ODEs that
         this network describes, using the template files.
-        """
 
+        If use_cse is True, then use sympy's common subexpression elimination
+        to simplify the generated equations.
+        """
+        
+        self.use_cse = use_cse
+        
         # Prepare RHS terms
         self.compose_ydot()
         self.compose_jacobian()
