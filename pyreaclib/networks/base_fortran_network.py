@@ -11,7 +11,7 @@ from pyreaclib.amemass import AME2012
 class BaseFortranNetwork(RateCollection):
     def __init__(self, *args, **kwargs):
         # Initialize RateCollection parent class
-        super(BaseFortranNetwork, self).__init__(*args, **kwargs)        
+        super(BaseFortranNetwork, self).__init__(*args, **kwargs)
         
         self.ftags = {}
         self.ftags['<nrates>'] = self.nrates
