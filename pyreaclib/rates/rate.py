@@ -218,6 +218,8 @@ class Rate(object):
             if self.file:
                 # Call rate file parser if its a standalone file.
                 ratedata = Rate.parse_rate_file(self.file)
+                idx = self.file.rfind("-")
+                self.fname = self.file[:idx].replace("--","-").replace("-","_")
             elif lines:
                 # Parse list of lines defining the rate
                 ratedata,_ = Rate.rate_from_lines(ratelines)
@@ -277,8 +279,6 @@ class Rate(object):
         File should be in Reaclib v2 format though
         the data can be any Reaclib version.
         """
-        idx = ratefile.rfind("-")
-        fname = ratefile[:idx].replace("--","-").replace("-","_")
         rfpath = Rate.get_rate_file_path(ratefile)
         # read in the file and close
         f = open(rfpath, "r")
