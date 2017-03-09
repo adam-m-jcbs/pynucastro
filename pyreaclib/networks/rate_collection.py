@@ -8,7 +8,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 # Import Rate
-from pyreaclib.rates import Rate
+from pyreaclib.rates import Rate, Nucleus
 
 class RateCollection(object):
     """ a collection of rates that together define a network """
@@ -39,13 +39,18 @@ class RateCollection(object):
             self.get_rates_from_files(rate_files)
             self.organize_rates()
 
-    def add(self, rate):
-        """ Given a Rate object, add it to the collection. """
-        if isinstance(rate, Rate):
-            self.rates.append(Rate)
-            self.organize_rates()
+    def add(self, rates):
+        """ 
+        Given a Rate object or list of Rate objects, add to the collection. 
+        """
+        ratelist = []
+        if isinstance(rates, Rate):
+            ratelist = [rates]
         else:
-            print('The argument to RateCollection.add should be a Rate object')
+            ratelist = rates
+        for r in ratelist:
+            self.rates.append(r)
+        self.organize_rates()
         
     def organize_rates(self):
         self.get_unique_nuclei()
@@ -221,11 +226,10 @@ class RateLibrary(RateCollection):
         lines = f.readlines()
         f.close()
         
-        ratelist = self.get_library_rates(lines)
-        for r in ratelist:
-            self.add(r)
+        ratelist = self.build_library(lines)
+        self.add(ratelist)
 
-    def get_library_rates(self, lines):
+    def build_library(self, lines):
         """ 
         Given a list of lines (lines),
         extract the rates as Rate objects
@@ -240,6 +244,17 @@ class RateLibrary(RateCollection):
             else:
                 break
         return ratelist
-        
-                
-        
+
+    def get_reaction_rp(reactants, products):
+        """
+        Given a reaction specified by tuples 'reactants'
+        and 'products' containing nuclei listed as 'he4', 'li7', etc,
+        return the Rate object matching the desired reaction.
+        """
+        reactants = set([Nucleus(ri) for ri in reactants])
+        products  = set([Nucleus(pi) for pi in products])
+        for r in self.rates:
+            if (set(r.products) == products and
+                set(r.reactants) == reactants):
+                return r
+        return None
