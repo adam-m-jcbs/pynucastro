@@ -1,4 +1,5 @@
 import os
+import glob
 import re
 import numpy as np
 import matplotlib.pyplot as plt
@@ -138,6 +139,7 @@ class TabularRateData(object):
     specify a tabular rate.
     """
     def __init__(self,
+                 original_source="",
                  chapter=None,
                  reactants=[],
                  products=[],
@@ -147,6 +149,7 @@ class TabularRateData(object):
                  table_temp_lines=None,
                  table_num_vars=None,
                  table_index_name=None):
+        self.original_source = original_source
         self.chapter = chapter
         self.reactants = reactants
         self.products = products
@@ -163,11 +166,13 @@ class ReaclibRateData(object):
     specify a Reaclib rate.
     """
     def __init__(self,
+                 original_source="",
                  chapter=None,
                  reactants=[],
                  products=[],
                  Q=None,
                  sets=[]):
+        self.original_source = original_source
         self.chapter = chapter
         self.reactants = reactants
         self.products = products
@@ -212,29 +217,31 @@ class Rate(object):
         if not ratedata:
             if self.file:
                 # Call rate file parser if its a standalone file.
-                ratedata, = parse_rate_file(self.file)
+                ratedata = Rate.parse_rate_file(self.file)
             elif lines:
                 # Parse list of lines defining the rate
-                ratedata, = Rate.rate_from_lines(ratelines)
+                ratedata,_ = Rate.rate_from_lines(ratelines)
 
         # Set Rate information
         if ratedata:
             if isinstance(ratedata, ReaclibRateData):
-                self.chapter = chapter
-                self.reactants = reactants
-                self.products = products
-                self.Q = Q
-                self.sets = sets
+                self.original_source = ratedata.original_source
+                self.chapter = ratedata.chapter
+                self.reactants = ratedata.reactants
+                self.products = ratedata.products
+                self.Q = ratedata.Q
+                self.sets = ratedata.sets
             elif isinstance(ratedata, TabularRateData):
-                self.chapter = chapter
-                self.reactants = reactants
-                self.products = products
-                self.table_file = table_file
-                self.table_header_lines = table_header_lines
-                self.table_rhoy_lines = table_rhoy_lines
-                self.table_temp_lines = table_temp_lines
-                self.table_num_vars = table_num_vars
-                self.table_index_name = table_index_name
+                self.original_source = ratedata.original_source                
+                self.chapter = ratedata.chapter
+                self.reactants = ratedata.reactants
+                self.products = ratedata.products
+                self.table_file = ratedata.table_file
+                self.table_header_lines = ratedata.table_header_lines
+                self.table_rhoy_lines = ratedata.table_rhoy_lines
+                self.table_temp_lines = ratedata.table_temp_lines
+                self.table_num_vars = ratedata.table_num_vars
+                self.table_index_name = ratedata.table_index_name
             # Calculate rate properties
             self.compute_prefactor()
             self.decide_screening()
@@ -244,22 +251,42 @@ class Rate(object):
         return self.string
 
     @staticmethod
+    def get_rate_file_path(rate_file):
+        # get the rates in the list of rate files
+        pyreaclib_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__))) 
+        pyreaclib_rates_dir = os.path.join(pyreaclib_dir, 'rates')
+        filepath = None
+        # check to see if the rate file is in the working dir
+        fp = glob.glob(rate_file)
+        if fp:
+            filepath = fp[0]
+        else:
+            # check to see if the rate file is in pyreaclib/rates
+            fp = glob.glob(os.path.join(pyreaclib_rates_dir, rate_file))
+            if fp:
+                filepath = fp[0]
+            else: # Notify of missing file before exiting
+                print('ERROR: File {} not found in {} or the working directory!'.format(
+                    rate_file, pyreaclib_rates_dir))
+        return filepath
+    
+    @staticmethod
     def parse_rate_file(ratefile):
         """ 
         Parse a standalone file containing a single rate.
-        File should be in Reaclib v1 format though
+        File should be in Reaclib v2 format though
         the data can be any Reaclib version.
         """
         idx = ratefile.rfind("-")
         fname = ratefile[:idx].replace("--","-").replace("-","_")
-
+        rfpath = Rate.get_rate_file_path(ratefile)
         # read in the file and close
-        f = open(ratefile, "r")                            
+        f = open(rfpath, "r")
         lines = f.readlines()
         f.close()
 
         # extract rate data from lines
-        ratedata, = Rate.rate_from_lines(lines)
+        ratedata,_ = Rate.rate_from_lines(lines)
         return ratedata
 
     @staticmethod
@@ -310,7 +337,7 @@ class Rate(object):
         products = []
         this_rate_data = None
         # Get the chapter
-        chapter, = Rate.get_chapter(lines)
+        chapter,_ = Rate.get_chapter(lines)
 
         # catch table prescription
         if chapter != "t":
@@ -344,7 +371,9 @@ class Rate(object):
                 table_num_vars     = 6 
                 table_index_name = 'j_{}_{}'.format(reactants[0],
                                                     products[0])
-                this_rate_data = TabularRateData(chapter,
+                original_source = "".join([s0, s1, s2, s3, s4, s5])
+                this_rate_data = TabularRateData(original_source,
+                                                 chapter,
                                                  reactants,
                                                  products,
                                                  table_file,
@@ -361,13 +390,17 @@ class Rate(object):
             first = True
             sets = []
             different_rate = False
+            original_source = ""
             while len(set_lines) > 3 and not different_rate:
                 # sets are 4 lines long
                 s0 = set_lines[0] # chapter
                 s1 = set_lines[1]
                 s2 = set_lines[2]
                 s3 = set_lines[3]
-                
+                print(s0)
+                print(s1)
+                print(s2)
+                print(s3)
                 # first line of a set has up to 6 nuclei, then the label,
                 # and finally the Q value
                 f = s1.split()
@@ -385,7 +418,7 @@ class Rate(object):
                     sreactants, sproducts = Rate.get_react_prod(f, chapter)
                     if not (set(reactants) == set(sreactants) and
                             set(products)  == set(sproducts) and
-                            s0.strip() == chapter):
+                            int(s0.strip()) == chapter):
                         # This is not the same reaction as the first set
                         # Stop reading set_lines and return what we have
                         different_rate = True
@@ -399,12 +432,15 @@ class Rate(object):
 
                     a = [float(e) for e in a if not e.strip() == ""]
                     sets.append(SingleSet(a, label=label))
-                    # Pop the 3 set lines we just used from set_lines
+                    original_source += "".join([s0, s1, s2, s3])
+                    # Pop the 1 chapter and 3 set lines we just used from set_lines
+                    set_lines.pop(0)
                     set_lines.pop(0)
                     set_lines.pop(0)
                     set_lines.pop(0)
             if Q:
-                this_rate_data = ReaclibRateData(chapter,
+                this_rate_data = ReaclibRateData(original_source,
+                                                 chapter,
                                                  reactants,
                                                  products,
                                                  Q,
