@@ -30,7 +30,6 @@ class RateCollection(object):
         Rate objects using the RateCollection.add() method.
         """
         self.pyreaclib_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-        self.files = []
         self.rates = []
 
         if rate_files:
@@ -57,28 +56,32 @@ class RateCollection(object):
         self.map_rates_to_nuclei()
         self.sort_rates()
 
-    def get_rates_from_files(self, rate_files):
+    def get_rate_file_path(self, rate_files):
         # get the rates in the list of rate files
         self.pyreaclib_rates_dir = os.path.join(self.pyreaclib_dir, 'rates')
         exit_program = False
+        files = []
         for p in rate_files:
             # check to see if the rate file is in the working dir
             fp = glob.glob(p)
             if fp:
-                self.files += fp
+                files += fp
             else:
-                # check to see if the rate file is in pyreaclib/reaclib-rates
+                # check to see if the rate file is in pyreaclib/rates
                 fp = glob.glob(os.path.join(self.pyreaclib_rates_dir, p))
                 if fp:
-                    self.files += fp
+                    files += fp
                 else: # Notify of all missing files before exiting
                     print('ERROR: File {} not found in {} or the working directory!'.format(
                         p,self.pyreaclib_rates_dir))
                     exit_program = True 
         if exit_program:
             exit()
-
-        for rf in self.files:
+        return files
+        
+    def get_rates_from_files(self, rate_files):
+        files = self.get_rate_file_path(rate_files)
+        for rf in files:
             try:
                 self.rates.append(Rate(rf))
             except:
@@ -222,7 +225,8 @@ class RateLibrary(RateCollection):
         the data can be any Reaclib version.
         """
         # read in the file, parse the different Rates
-        f = open(self.library_file, "r")
+        lfpath = self.get_rate_file_path([self.library_file])
+        f = open(lfpath[0], "r")
         lines = f.readlines()
         f.close()
         
